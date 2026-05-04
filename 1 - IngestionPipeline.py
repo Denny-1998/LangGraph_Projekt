@@ -1,36 +1,64 @@
 import os
 import re
 from langchain_community.document_loaders import PyPDFDirectoryLoader
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import TextLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_chroma import Chroma
 
+
 # ==========================================
 # 1. KONFIGURATION & VARIABLEN
 # ==========================================
-PDF_ORDNER = "./meine_pdfs"
+DOK_ORDNER = "./meine_pdfs"
 DATENBANK_ORDNER = "./chroma_db"
 
-# Hier stellst du dein Token-Limit ein! 
-# (Da Standard-Splitter oft mit Zeichen rechnen, nutzen wir die Faustregel: 1 Token = ~4 Zeichen)
 TOKEN_LIMIT = 400 
 ZEICHEN_LIMIT = TOKEN_LIMIT * 4 
+
+SUPPORTED_EXTENSIONS = {".pdf", ".txt"}
 
 print("\n--- [START] Lokale RAG Ingestion Pipeline ---")
 
 # ==========================================
 # 2. EINLESEN (Loading)
 # ==========================================
-print(f"-> Lese PDFs aus dem Ordner '{PDF_ORDNER}' ein...")
-if not os.path.exists(PDF_ORDNER):
-    os.makedirs(PDF_ORDNER)
-    print(f"   [!] Ordner '{PDF_ORDNER}' existierte nicht und wurde erstellt. Bitte PDFs einfügen und neu starten.")
+print(f"-> Lese Dokumente aus dem Ordner '{DOK_ORDNER}' ein...")
+if not os.path.exists(DOK_ORDNER):
+    os.makedirs(DOK_ORDNER)
+    print(f"   [!] Ordner '{DOK_ORDNER}' existierte nicht und wurde erstellt. Bitte Dokumente einfügen und neu starten.")
     exit()
 
-loader = PyPDFDirectoryLoader(PDF_ORDNER)
-dokumente = loader.load()
-print(f"   [OK] {len(dokumente)} Seiten/Dokumente erfolgreich geladen.")
+dokumente = []
+
+for dateiname in os.listdir(DOK_ORDNER):
+    dateipfad = os.path.join(DOK_ORDNER, dateiname)
+
+    if not os.path.isfile(dateipfad):
+        continue
+
+    endung = os.path.splitext(dateiname)[1].lower()
+
+    if endung not in SUPPORTED_EXTENSIONS:
+        print(f"   [~] Überspringe nicht unterstützte Datei: {dateiname}")
+        continue
+
+    match endung:
+        case ".pdf":
+            loader = PyPDFLoader(dateipfad)
+        case ".txt":
+            loader = TextLoader(dateipfad, encoding="utf-8")
+
+    geladene_docs = loader.load()
+    dokumente.extend(geladene_docs)
+    print(f"   [OK] {dateiname}: {len(geladene_docs)} Seite(n)/Abschnitt(e) geladen.")
+
+print(f"\n   [OK] Gesamt: {len(dokumente)} Seiten/Dokumente erfolgreich geladen.")
+
+
+
 
 # ==========================================
 # 3. NORMALISIEREN (Cleaning)

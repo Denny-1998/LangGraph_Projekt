@@ -11,7 +11,7 @@ from langgraph.graph import END, StateGraph
 # 1. SETUP: MODELLE & DATENBANK
 # ==========================================
 print("\n[SYSTEM] Lade Modelle und Vektordatenbank...")
-llm = ChatOllama(model="llama3", temperature=0)
+llm = ChatOllama(model="llama3:8b", temperature=0)
 
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 vectorstore = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
