@@ -61,17 +61,17 @@ print("-> Beginne mit dem Chunking...")
 
 # OPTION A: Fixes Limit (basiert auf der TOKEN_LIMIT Variable)
 # Kommentiere diesen Block ein, wenn du das fixe Limit nutzen willst:
-print(f"   [Info] Nutze fixes Limit (~{TOKEN_LIMIT} Tokens / {ZEICHEN_LIMIT} Zeichen pro Chunk).")
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=ZEICHEN_LIMIT,
-    chunk_overlap=200, # Überlappung, damit keine Sätze mittendrin den Kontext verlieren
-    separators=["\n\n", "\n", ".", " ", ""]
-)
+#print(f"   [Info] Nutze fixes Limit (~{TOKEN_LIMIT} Tokens / {ZEICHEN_LIMIT} Zeichen pro Chunk).")
+#text_splitter = RecursiveCharacterTextSplitter(
+#    chunk_size=ZEICHEN_LIMIT,
+#    chunk_overlap=200, # Überlappung, damit keine Sätze mittendrin den Kontext verlieren
+#    separators=["\n\n", "\n", ".", " ", ""]
+#)
 
 # OPTION B: Semantisches Chunking
 # Kommentiere den TextSplitter oben aus und diesen hier ein, für semantisches Chunking:
-# print("   [Info] Nutze Semantisches Chunking (trennt nach Sinnabschnitten).")
-# text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="percentile")
+print("   [Info] Nutze Semantisches Chunking (trennt nach Sinnabschnitten).")
+text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="percentile")
 
 chunks = text_splitter.split_documents(dokumente)
 print(f"   [OK] Dokumente wurden in {len(chunks)} Chunks unterteilt.")
