@@ -11,6 +11,7 @@ from langgraph.graph import END, StateGraph
 # 1. SETUP: MODELLE & DATENBANK
 # ==========================================
 print("\n[SYSTEM] Lade Modelle und Vektordatenbank...")
+
 # Das LLM aus Ollama (Temperatur 0 = sehr sachlich, keine Halluzinationen)
 llm = ChatOllama(model="llama3", temperature=0)
 
