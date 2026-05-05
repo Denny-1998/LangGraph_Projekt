@@ -11,8 +11,11 @@ from langgraph.graph import END, StateGraph
 # 1. SETUP: MODELLE & DATENBANK
 # ==========================================
 print("\n[SYSTEM] Lade Modelle und Vektordatenbank...")
-llm = ChatOllama(model="llama3:8b", temperature=0)
 
+# Das LLM aus Ollama (Temperatur 0 = sehr sachlich, keine Halluzinationen)
+llm = ChatOllama(model="llama3", temperature=0)
+
+# Vektordatenbank laden
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 vectorstore = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
 retriever = vectorstore.as_retriever(search_kwargs={"k": 3}) 
@@ -20,11 +23,12 @@ retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 # ==========================================
 # 2. DER ZUSTAND (State)
 # ==========================================
+# Das ist das "Gedächtnis" des Graphen. Diese Variablen werden von Knoten zu Knoten weitergereicht.
 class GraphState(TypedDict):
     question: str
     generation: str
     documents: List[str]
-    loop_count: int # NEU: Zählt die Anzahl der Umformulierungen
+    loop_count: int # Zählt die Anzahl der Umformulierungen
 
 # ==========================================
 # 3. DIE KNOTEN (Nodes)
@@ -44,6 +48,7 @@ def retrieve(state: GraphState):
     return {"documents": documents, "question": question}
 
 def grade_documents(state: GraphState):
+    # Prüft, ob die gefundenen Dokumente die Frage beantworten können.
     print("-> [KNOTEN: GRADER] Bewerte die Relevanz der gefundenen Dokumente...")
     question = state["question"]
     documents = state["documents"]
@@ -73,6 +78,7 @@ def grade_documents(state: GraphState):
     return {"documents": gefilterte_docs, "question": question}
 
 def transform_query(state: GraphState):
+    # Formuliert die Frage um, falls keine guten Dokumente gefunden wurden.
     print("-> [KNOTEN: REWRITER] Suche erfolglos. Formuliere die Frage um...")
     question = state["question"]
     loop_count = state.get("loop_count", 0) + 1 # NEU: Zähler erhöhen
@@ -96,6 +102,7 @@ def generate(state: GraphState):
     question = state["question"]
     documents = state["documents"]
     
+     # Fasse die Texte der Dokumente zusammen
     kontext = "\n\n".join([d.page_content for d in documents])
     
     prompt = PromptTemplate(
@@ -120,6 +127,7 @@ def abort_search(state: GraphState):
 # 4. DIE LOGIK (Edges)
 # ==========================================
 def decide_to_generate(state: GraphState):
+    # Entscheidet nach der Bewertung, wie es weitergeht.
     print("-> [LOGIK: ENTSCHEIDUNG] Prüfe, ob genügend relevanter Kontext vorliegt...")
     gefilterte_docs = state["documents"]
     loop_count = state.get("loop_count", 0)
@@ -139,27 +147,30 @@ def decide_to_generate(state: GraphState):
 # ==========================================
 workflow = StateGraph(GraphState)
 
+# Knoten hinzufügen
 workflow.add_node("retrieve", retrieve)
 workflow.add_node("grade_documents", grade_documents)
 workflow.add_node("transform_query", transform_query)
 workflow.add_node("generate", generate)
 workflow.add_node("abort_search", abort_search) # NEU
 
+# Ablauf definieren
 workflow.set_entry_point("retrieve")
 workflow.add_edge("retrieve", "grade_documents")
 
+# Hier kommt die Magie: Eine bedingte Abzweigung!
 workflow.add_conditional_edges(
     "grade_documents",
     decide_to_generate,
     {
-        "transform_query": "transform_query", 
-        "generate": "generate",               
-        "abort_search": "abort_search",       # NEU
+        "transform_query": "transform_query", # Wenn keine guten Docs -> umschreiben
+        "generate": "generate",               # Wenn gute Docs -> generieren
+        "abort_search": "abort_search",       # Abbruch wenn es zehnmal nix findet
     }
 )
-workflow.add_edge("transform_query", "retrieve") 
+workflow.add_edge("transform_query", "retrieve") # Nach dem Umschreiben wieder suchen
 workflow.add_edge("generate", END) 
-workflow.add_edge("abort_search", END) # NEU
+workflow.add_edge("abort_search", END) # Nach der Antwort oder dem Abbruch ist Schluss
 
 app = workflow.compile()
 
@@ -187,6 +198,7 @@ while True:
     # Graph ausführen
     final_state = None
     for output in app.stream(inputs):
+        # Durchläuft alle Schritte und gibt das Terminal-Feedback aus den Knoten
         final_state = output
         
     # Ergebnis abgreifen (der Schlüssel im Output ändert sich je nach letztem Knoten, 
