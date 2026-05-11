@@ -13,7 +13,7 @@ from langgraph.graph import END, StateGraph
 print("\n[SYSTEM] Lade Modelle und Vektordatenbank...")
 
 # Das LLM aus Ollama (Temperatur 0 = sehr sachlich, keine Halluzinationen)
-llm = ChatOllama(model="llama3", temperature=0)
+llm = ChatOllama(model="gemma4", temperature=0)
 
 # Vektordatenbank laden
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
@@ -42,7 +42,7 @@ def retrieve(state: GraphState):
     # NEU: Detaillierte Ausgabe, was überhaupt gefunden wurde
     print(f"   [i] {len(documents)} Chunks initial gefunden. Vorschau:")
     for i, d in enumerate(documents):
-        snippet = d.page_content.replace('\n', ' ')[:80] # Vorschau der ersten 80 Zeichen
+        snippet = d.page_content.replace('\n', ' ')#[:80] # Vorschau der ersten 80 Zeichen
         print(f"       - Chunk {i+1}: '{snippet}...'")
         
     return {"documents": documents, "question": question}

@@ -7,6 +7,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_chroma import Chroma
+import shutil
 
 
 # ==========================================
@@ -99,7 +100,7 @@ print("-> Beginne mit dem Chunking...")
 # OPTION B: Semantisches Chunking
 # Kommentiere den TextSplitter oben aus und diesen hier ein, für semantisches Chunking:
 print("   [Info] Nutze Semantisches Chunking (trennt nach Sinnabschnitten).")
-text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="percentile")
+text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="standard_deviation")
 
 chunks = text_splitter.split_documents(dokumente)
 print(f"   [OK] Dokumente wurden in {len(chunks)} Chunks unterteilt.")
@@ -108,6 +109,8 @@ print(f"   [OK] Dokumente wurden in {len(chunks)} Chunks unterteilt.")
 # 6. VEKTOR-DATENBANK SPEICHERN (ChromaDB)
 # ==========================================
 print("-> Vektorisiere Chunks und speichere sie in ChromaDB...")
+if os.path.exists(DATENBANK_ORDNER):
+    shutil.rmtree(DATENBANK_ORDNER)
 vektor_db = Chroma.from_documents(
     documents=chunks,
     embedding=embeddings,
