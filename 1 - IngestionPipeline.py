@@ -1,5 +1,6 @@
 import os
 import re
+import json
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.document_loaders import TextLoader
@@ -9,16 +10,37 @@ from langchain_experimental.text_splitter import SemanticChunker
 from langchain_chroma import Chroma
 import shutil
 
+# ==========================================
+# 1. KONFIGURATION & VARIABLEN (Aus JSON oder Defaults)
+# ==========================================
+CONFIG_FILE = "rag_config.json"
 
-# ==========================================
-# 1. KONFIGURATION & VARIABLEN
-# ==========================================
+# Standard-Fallbacks, falls keine JSON existiert
 DOK_ORDNER = "./meine_pdfs"
 DATENBANK_ORDNER = "./chroma_db"
-
 TOKEN_LIMIT = 400 
-ZEICHEN_LIMIT = TOKEN_LIMIT * 4 
+CHUNK_OVERLAP = 200
+CHUNKING_MODE = "semantic"  # "semantic" oder "fixed"
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
+# Versuche Einstellungen aus JSON zu laden
+if os.path.exists(CONFIG_FILE):
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+            DOK_ORDNER = config.get("dok_ordner", DOK_ORDNER)
+            DATENBANK_ORDNER = config.get("datenbank_ordner", DATENBANK_ORDNER)
+            TOKEN_LIMIT = int(config.get("token_limit", TOKEN_LIMIT))
+            CHUNK_OVERLAP = int(config.get("chunk_overlap", CHUNK_OVERLAP))
+            CHUNKING_MODE = config.get("chunking_mode", CHUNKING_MODE)
+            EMBEDDING_MODEL = config.get("embedding_model", EMBEDDING_MODEL)
+            print(f"[INFO] Konfiguration erfolgreich aus '{CONFIG_FILE}' geladen.")
+    except Exception as e:
+        print(f"[WARNUNG] Fehler beim Lesen der '{CONFIG_FILE}'. Nutze Standardwerte. Fehler: {e}")
+else:
+    print(f"[INFO] Keine '{CONFIG_FILE}' gefunden. Nutze eingebaute Standardwerte.")
+
+ZEICHEN_LIMIT = TOKEN_LIMIT * 4 
 SUPPORTED_EXTENSIONS = {".pdf", ".txt"}
 
 print("\n--- [START] Lokale RAG Ingestion Pipeline ---")
@@ -58,15 +80,12 @@ for dateiname in os.listdir(DOK_ORDNER):
 
 print(f"\n   [OK] Gesamt: {len(dokumente)} Seiten/Dokumente erfolgreich geladen.")
 
-
-
-
 # ==========================================
 # 3. NORMALISIEREN (Cleaning)
 # ==========================================
 print("-> Normalisiere den Text (entferne doppelte Leerzeichen, Zeilenumbrüche etc.)...")
 def normalisiere_text(text):
-    text = re.sub(r'\s+', ' ', text) # Macht aus mehrfachen Leerzeichen/Umbrüchen ein einzelnes Leerzeichen
+    text = re.sub(r'\s+', ' ', text)
     text = text.strip()
     return text
 
@@ -77,10 +96,8 @@ print("   [OK] Text normalisiert.")
 # ==========================================
 # 4. VEKTORISIEREN VORBEREITEN (Embedding Model)
 # ==========================================
-# Wir laden das Embedding-Modell jetzt schon, da das Semantische Chunking es ebenfalls benötigt.
-print("-> Lade lokales Embedding-Modell (SBERT: all-MiniLM-L6-v2)...")
-# all-MiniLM-L6-v2 ist der absolute Goldstandard für schnelle, lokale SBERT Embeddings
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2") 
+print(f"-> Lade lokales Embedding-Modell (SBERT: {EMBEDDING_MODEL})...")
+embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL) 
 print("   [OK] Modell geladen.")
 
 # ==========================================
@@ -88,19 +105,16 @@ print("   [OK] Modell geladen.")
 # ==========================================
 print("-> Beginne mit dem Chunking...")
 
-# OPTION A: Fixes Limit (basiert auf der TOKEN_LIMIT Variable)
-# Kommentiere diesen Block ein, wenn du das fixe Limit nutzen willst:
-#print(f"   [Info] Nutze fixes Limit (~{TOKEN_LIMIT} Tokens / {ZEICHEN_LIMIT} Zeichen pro Chunk).")
-#text_splitter = RecursiveCharacterTextSplitter(
-#    chunk_size=ZEICHEN_LIMIT,
-#    chunk_overlap=200, # Überlappung, damit keine Sätze mittendrin den Kontext verlieren
-#    separators=["\n\n", "\n", ".", " ", ""]
-#)
-
-# OPTION B: Semantisches Chunking
-# Kommentiere den TextSplitter oben aus und diesen hier ein, für semantisches Chunking:
-print("   [Info] Nutze Semantisches Chunking (trennt nach Sinnabschnitten).")
-text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="standard_deviation")
+if CHUNKING_MODE == "semantic":
+    print("   [Info] Nutze Semantisches Chunking (trennt nach Sinnabschnitten).")
+    text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="standard_deviation")
+else:
+    print(f"   [Info] Nutze fixes Limit (~{TOKEN_LIMIT} Tokens / {ZEICHEN_LIMIT} Zeichen pro Chunk).")
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=ZEICHEN_LIMIT,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ".", " ", ""]
+    )
 
 chunks = text_splitter.split_documents(dokumente)
 print(f"   [OK] Dokumente wurden in {len(chunks)} Chunks unterteilt.")
@@ -108,7 +122,7 @@ print(f"   [OK] Dokumente wurden in {len(chunks)} Chunks unterteilt.")
 # ==========================================
 # 6. VEKTOR-DATENBANK SPEICHERN (ChromaDB)
 # ==========================================
-print("-> Vektorisiere Chunks und speichere sie in ChromaDB...")
+print(f"-> Vektorisiere Chunks und speichere sie in ChromaDB unter '{DATENBANK_ORDNER}'...")
 if os.path.exists(DATENBANK_ORDNER):
     shutil.rmtree(DATENBANK_ORDNER)
 vektor_db = Chroma.from_documents(
