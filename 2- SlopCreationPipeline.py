@@ -1,4 +1,5 @@
 import os
+import json
 from typing import List, TypedDict
 from langchain_community.chat_models import ChatOllama
 from langchain_core.prompts import PromptTemplate
@@ -8,47 +9,69 @@ from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import END, StateGraph
 
 # ==========================================
-# 1. SETUP: MODELLE & DATENBANK
+# 1. SETUP: CONFIGURATION, MODELLE & DATENBANK
 # ==========================================
+CONFIG_FILE = "rag_config.json"
+
+# Standard-Fallbacks
+DATENBANK_ORDNER = "./chroma_db"
+OLLAMA_MODEL = "gemma4:e4b"
+LLM_TEMPERATURE = 0.0
+RETRIEVER_K = 3
+MAX_REWRITE_LOOPS = 10
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+
+if os.path.exists(CONFIG_FILE):
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+            DATENBANK_ORDNER = config.get("datenbank_ordner", DATENBANK_ORDNER)
+            OLLAMA_MODEL = config.get("ollama_model", OLLAMA_MODEL)
+            LLM_TEMPERATURE = float(config.get("llm_temperature", LLM_TEMPERATURE))
+            RETRIEVER_K = int(config.get("retriever_k", RETRIEVER_K))
+            MAX_REWRITE_LOOPS = int(config.get("max_rewrite_loops", MAX_REWRITE_LOOPS))
+            EMBEDDING_MODEL = config.get("embedding_model", EMBEDDING_MODEL)
+            print(f"[INFO] Konfiguration erfolgreich aus '{CONFIG_FILE}' geladen.")
+    except Exception as e:
+        print(f"[WARNUNG] Fehler beim Lesen der '{CONFIG_FILE}'. Nutze Standardwerte. Fehler: {e}")
+else:
+    print(f"[INFO] Keine '{CONFIG_FILE}' gefunden. Nutze eingebaute Standardwerte.")
+
 print("\n[SYSTEM] Lade Modelle und Vektordatenbank...")
 
-# Das LLM aus Ollama (Temperatur 0 = sehr sachlich, keine Halluzinationen)
-llm = ChatOllama(model="gemma4", temperature=0)
+# Das LLM aus Ollama
+llm = ChatOllama(model=OLLAMA_MODEL, temperature=LLM_TEMPERATURE)
 
 # Vektordatenbank laden
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-vectorstore = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
-retriever = vectorstore.as_retriever(search_kwargs={"k": 3}) 
+embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+vectorstore = Chroma(persist_directory=DATENBANK_ORDNER, embedding_function=embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": RETRIEVER_K}) 
 
 # ==========================================
 # 2. DER ZUSTAND (State)
 # ==========================================
-# Das ist das "Gedächtnis" des Graphen. Diese Variablen werden von Knoten zu Knoten weitergereicht.
 class GraphState(TypedDict):
     question: str
     generation: str
     documents: List[str]
-    loop_count: int # Zählt die Anzahl der Umformulierungen
+    loop_count: int
 
 # ==========================================
 # 3. DIE KNOTEN (Nodes)
 # ==========================================
-
 def retrieve(state: GraphState):
     print("\n-> [KNOTEN: RETRIEVE] Suche in der Vektordatenbank...")
     question = state["question"]
     documents = retriever.invoke(question)
     
-    # NEU: Detaillierte Ausgabe, was überhaupt gefunden wurde
     print(f"   [i] {len(documents)} Chunks initial gefunden. Vorschau:")
     for i, d in enumerate(documents):
-        snippet = d.page_content.replace('\n', ' ')#[:80] # Vorschau der ersten 80 Zeichen
+        snippet = d.page_content.replace('\n', ' ')
         print(f"       - Chunk {i+1}: '{snippet}...'")
         
     return {"documents": documents, "question": question}
 
 def grade_documents(state: GraphState):
-    # Prüft, ob die gefundenen Dokumente die Frage beantworten können.
     print("-> [KNOTEN: GRADER] Bewerte die Relevanz der gefundenen Dokumente...")
     question = state["question"]
     documents = state["documents"]
@@ -68,7 +91,6 @@ def grade_documents(state: GraphState):
         bewertung = grader_chain.invoke({"question": question, "document": d.page_content})
         snippet = d.page_content.replace('\n', ' ')[:80]
         
-        # NEU: Detaillierte Ausgabe der Entscheidung
         if "ja" in bewertung.lower():
             print(f"   [+] BEHALTEN (Relevant): '{snippet}...'")
             gefilterte_docs.append(d)
@@ -78,10 +100,9 @@ def grade_documents(state: GraphState):
     return {"documents": gefilterte_docs, "question": question}
 
 def transform_query(state: GraphState):
-    # Formuliert die Frage um, falls keine guten Dokumente gefunden wurden.
     print("-> [KNOTEN: REWRITER] Suche erfolglos. Formuliere die Frage um...")
     question = state["question"]
-    loop_count = state.get("loop_count", 0) + 1 # NEU: Zähler erhöhen
+    loop_count = state.get("loop_count", 0) + 1
     
     prompt = PromptTemplate(
         template="""Du bist ein Experte im Formulieren von Suchanfragen. 
@@ -102,7 +123,6 @@ def generate(state: GraphState):
     question = state["question"]
     documents = state["documents"]
     
-     # Fasse die Texte der Dokumente zusammen
     kontext = "\n\n".join([d.page_content for d in documents])
     
     prompt = PromptTemplate(
@@ -119,22 +139,20 @@ def generate(state: GraphState):
     return {"documents": documents, "question": question, "generation": antwort}
 
 def abort_search(state: GraphState):
-    """NEU: Fängt den Fall ab, wenn 10 Mal erfolglos gesucht wurde."""
     print("-> [KNOTEN: ABBRUCH] Limit erreicht. Gebe auf...")
-    return {"generation": "Ich konnte leider auch nach 10 Suchläufen und Umformulierungen keine relevanten Informationen in den bereitgestellten PDFs finden."}
+    return {"generation": f"Ich konnte leider auch nach {MAX_REWRITE_LOOPS} Suchläufen und Umformulierungen keine relevanten Informationen in den bereitgestellten PDFs finden."}
 
 # ==========================================
 # 4. DIE LOGIK (Edges)
 # ==========================================
 def decide_to_generate(state: GraphState):
-    # Entscheidet nach der Bewertung, wie es weitergeht.
     print("-> [LOGIK: ENTSCHEIDUNG] Prüfe, ob genügend relevanter Kontext vorliegt...")
     gefilterte_docs = state["documents"]
     loop_count = state.get("loop_count", 0)
     
     if not gefilterte_docs:
-        if loop_count >= 10: # NEU: Abbruchbedingung
-            print("   [!] 10 erfolglose Versuche erreicht. Breche Suche ab.")
+        if loop_count >= MAX_REWRITE_LOOPS:
+            print(f"   [!] {MAX_REWRITE_LOOPS} erfolglose Versuche erreicht. Breche Suche ab.")
             return "abort_search"
         print("   [!] Keine relevanten Dokumente übrig. Gehe zum Rewriter.")
         return "transform_query"
@@ -147,30 +165,27 @@ def decide_to_generate(state: GraphState):
 # ==========================================
 workflow = StateGraph(GraphState)
 
-# Knoten hinzufügen
 workflow.add_node("retrieve", retrieve)
 workflow.add_node("grade_documents", grade_documents)
 workflow.add_node("transform_query", transform_query)
 workflow.add_node("generate", generate)
-workflow.add_node("abort_search", abort_search) # NEU
+workflow.add_node("abort_search", abort_search)
 
-# Ablauf definieren
 workflow.set_entry_point("retrieve")
 workflow.add_edge("retrieve", "grade_documents")
 
-# Hier kommt die Magie: Eine bedingte Abzweigung!
 workflow.add_conditional_edges(
     "grade_documents",
     decide_to_generate,
     {
-        "transform_query": "transform_query", # Wenn keine guten Docs -> umschreiben
-        "generate": "generate",               # Wenn gute Docs -> generieren
-        "abort_search": "abort_search",       # Abbruch wenn es zehnmal nix findet
+        "transform_query": "transform_query",
+        "generate": "generate",
+        "abort_search": "abort_search",
     }
 )
-workflow.add_edge("transform_query", "retrieve") # Nach dem Umschreiben wieder suchen
+workflow.add_edge("transform_query", "retrieve")
 workflow.add_edge("generate", END) 
-workflow.add_edge("abort_search", END) # Nach der Antwort oder dem Abbruch ist Schluss
+workflow.add_edge("abort_search", END)
 
 app = workflow.compile()
 
@@ -178,11 +193,10 @@ app = workflow.compile()
 # 6. INTERAKTIVE CHAT-SCHLEIFE (REPL)
 # ==========================================
 print("\n" + "="*50)
-print("🤖 AGENT BEREIT! (Tippe 'exit' oder 'quit' zum Beenden)")
+print(f"🤖 AGENT BEREIT! Modell: {OLLAMA_MODEL} (Tippe 'exit' oder 'quit' zum Beenden)")
 print("="*50)
 
 while True:
-    # NEU: Terminal-Abfrage während der Laufzeit
     user_input = input("\nDeine Frage an die PDFs: ")
     
     if user_input.lower() in ['exit', 'quit']:
@@ -192,17 +206,12 @@ while True:
     if not user_input.strip():
         continue
 
-    # Initialisiere den State mit der Frage und loop_count = 0
     inputs = {"question": user_input, "loop_count": 0}
 
-    # Graph ausführen
     final_state = None
     for output in app.stream(inputs):
-        # Durchläuft alle Schritte und gibt das Terminal-Feedback aus den Knoten
         final_state = output
         
-    # Ergebnis abgreifen (der Schlüssel im Output ändert sich je nach letztem Knoten, 
-    # daher holen wir uns dynamisch den Inhalt)
     knoten_name = list(final_state.keys())[0]
     finale_antwort = final_state[knoten_name]["generation"]
 

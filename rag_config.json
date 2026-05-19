@@ -1,0 +1,12 @@
+{
+  "dok_ordner": "./meine_pdfs",
+  "datenbank_ordner": "./chroma_db",
+  "token_limit": 400,
+  "chunk_overlap": 200,
+  "chunking_mode": "semantic",
+  "embedding_model": "all-MiniLM-L6-v2",
+  "ollama_model": "gemma4:e4b",
+  "llm_temperature": 0.0,
+  "retriever_k": 3,
+  "max_rewrite_loops": 10
+}
