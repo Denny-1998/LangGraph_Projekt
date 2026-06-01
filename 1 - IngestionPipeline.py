@@ -26,7 +26,7 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 # Versuche Einstellungen aus JSON zu laden
 if os.path.exists(CONFIG_FILE):
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(CONFIG_FILE, "r") as f:
             config = json.load(f)
             DOK_ORDNER = config.get("dok_ordner", DOK_ORDNER)
             DATENBANK_ORDNER = config.get("datenbank_ordner", DATENBANK_ORDNER)
@@ -72,7 +72,18 @@ for dateiname in os.listdir(DOK_ORDNER):
         case ".pdf":
             loader = PyPDFLoader(dateipfad)
         case ".txt":
-            loader = TextLoader(dateipfad, encoding="utf-8")
+            encodings_to_try = ["utf-8", "cp1252", "latin-1", "utf-16"]
+            geladene_docs = None
+            for enc in encodings_to_try:
+                try:
+                    loader = TextLoader(dateipfad, encoding=enc)
+                    geladene_docs = loader.load()
+                    break
+                except (UnicodeDecodeError, RuntimeError):
+                    continue
+            if geladene_docs is None:
+                print(f"   [!] Konnte '{dateiname}' mit keiner bekannten Kodierung lesen. Überspringe.")
+                continue
 
     geladene_docs = loader.load()
     dokumente.extend(geladene_docs)
