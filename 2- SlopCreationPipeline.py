@@ -69,7 +69,7 @@ def retrieve(state: GraphState):
     
     print(f"   [i] {len(documents)} Chunks initial gefunden. Vorschau:")
     for i, d in enumerate(documents):
-        snippet = d.page_content.replace('\n', ' ')
+        snippet = d.page_content.replace('\n', ' ')[:80]
         print(f"       - Chunk {i+1}: '{snippet}...'")
         
     return {"documents": documents, "question": question}
@@ -117,8 +117,9 @@ def transform_query(state: GraphState):
     )
     rewriter_chain = prompt | llm | StrOutputParser()
     bessere_frage = rewriter_chain.invoke({"question": question})
-    print(f"   [!] Neue Suchanfrage (Versuch {loop_count}): {bessere_frage.strip()}")
-    
+    print("\n" + "="*50) 
+    print(f"   ❔ Neue Suchanfrage (Versuch {loop_count}): {bessere_frage.strip()}")
+    print("="*50)
     return {"documents": state["documents"], "question": bessere_frage, "loop_count": loop_count}
 
 def generate(state: GraphState):
