@@ -89,14 +89,16 @@ def wait():
     input("\n  [Eingabe drücken, um fortzufahren...]")
 
 
-def run_script(skript_pfad: str):
+def run_script(skript_pfad: str, args: list = None):
     """Führt ein Pipeline-Skript direkt via Subprocess aus."""
     if not os.path.exists(skript_pfad):
         print(f"  [!] Fehler: Skript wurde nicht gefunden unter: {skript_pfad}")
         return
     try:
-        # Führt die Python-Datei im aktuellen Systemkontext aus
-        subprocess.run([sys.executable, skript_pfad])
+        cmd = [sys.executable, skript_pfad]
+        if args:
+            cmd.extend(args)
+        subprocess.run(cmd)
     except Exception as e:
         print(f"  [!] Fehler beim Ausführen des Skripts: {e}")
 
@@ -205,6 +207,9 @@ def main_menu():
         print("  [2]  💬  Slop Creation Pipeline ausführen")
         print("         (RAG-Agent starten → Fragen stellen)")
         print()
+        print("  [4]  📊  Batch-Evaluation ausführen")
+        print("         (Fragen aus TXT lesen → CSV-Auswertung erstellen)")
+        print()
         dividing_line()
         print("  [3]  ⚙   Einstellungen")
         print("  [0]  ✗   Beenden")
@@ -252,6 +257,22 @@ def main_menu():
 
         elif selection == "3":
             config = settings_menu(config)
+
+        elif selection == "4":
+            header("📊 Batch-Evaluation")
+            input_pfad = prompt_input("Pfad zur TXT-Datei mit Fragen", "fragen.txt")
+            output_pfad = prompt_input("Pfad zur CSV-Ausgabedatei", "eval_ergebnisse.csv")
+            
+            if not os.path.exists(input_pfad):
+                print(f"\n  [!] Fehler: Eingabedatei '{input_pfad}' existiert nicht.")
+                wait()
+                continue
+                
+            print()
+            if confirmation("Batch-Evaluation jetzt starten?"):
+                print()
+                run_script(SLOP_SCRIPT, ["--batch_input", input_pfad, "--batch_output", output_pfad])
+                wait()
 
         else:
             print("  [!] Ungültige Eingabe.")

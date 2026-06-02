@@ -1,5 +1,8 @@
 import os
 import json
+import time
+import csv
+import argparse
 from typing import List, TypedDict
 from langchain_community.chat_models import ChatOllama
 from langchain_core.prompts import PromptTemplate
@@ -190,32 +193,128 @@ workflow.add_edge("abort_search", END)
 app = workflow.compile()
 
 # ==========================================
-# 6. INTERAKTIVE CHAT-SCHLEIFE (REPL)
+# 6. INTERAKTIVE CHAT-SCHLEIFE (REPL) & BATCH
 # ==========================================
-print("\n" + "="*50)
-print(f"🤖 AGENT BEREIT! Modell: {OLLAMA_MODEL} (Tippe 'exit' oder 'quit' zum Beenden)")
-print("="*50)
 
-while True:
-    user_input = input("\nDeine Frage an die PDFs: ")
-    
-    if user_input.lower() in ['exit', 'quit']:
-        print("Agent wird beendet. Bis bald!")
-        break
-    
-    if not user_input.strip():
-        continue
-
-    inputs = {"question": user_input, "loop_count": 0}
-
-    final_state = None
-    for output in app.stream(inputs):
-        final_state = output
-        
-    knoten_name = list(final_state.keys())[0]
-    finale_antwort = final_state[knoten_name]["generation"]
-
+def run_interactive_mode():
     print("\n" + "="*50)
-    print("🤖 ANTWORT:")
+    print(f"🤖 AGENT BEREIT! Modell: {OLLAMA_MODEL} (Tippe 'exit' oder 'quit' zum Beenden)")
     print("="*50)
-    print(finale_antwort)
+
+    while True:
+        user_input = input("\nDeine Frage an die PDFs: ")
+        
+        if user_input.lower() in ['exit', 'quit']:
+            print("Agent wird beendet. Bis bald!")
+            break
+        
+        if not user_input.strip():
+            continue
+
+        inputs = {"question": user_input, "loop_count": 0}
+
+        final_state = None
+        for output in app.stream(inputs):
+            final_state = output
+            
+        knoten_name = list(final_state.keys())[0]
+        finale_antwort = final_state[knoten_name]["generation"]
+
+        print("\n" + "="*50)
+        print("🤖 ANTWORT:")
+        print("="*50)
+        print(finale_antwort)
+
+
+def run_batch_mode(input_pfad: str, output_pfad: str):
+    if not os.path.exists(input_pfad):
+        print(f"  [!] Fehler: Eingabedatei '{input_pfad}' existiert nicht.")
+        return
+
+    if not output_pfad:
+        output_pfad = "eval_ergebnisse.csv"
+
+    print(f"\n[BATCH] Lese Fragen aus '{input_pfad}'...")
+    with open(input_pfad, "r", encoding="utf-8") as f:
+        fragen = [line.strip() for line in f if line.strip()]
+
+    print(f"[BATCH] Gefunden: {len(fragen)} Fragen. Starte Verarbeitung...")
+    
+    ergebnisse = []
+    
+    for i, frage in enumerate(fragen, 1):
+        print(f"\n" + "="*50)
+        print(f"  [BATCH] [{i}/{len(fragen)}] Verarbeite Frage: '{frage}'")
+        print("="*50)
+        
+        start_time = time.perf_counter()
+        
+        inputs = {"question": frage, "loop_count": 0}
+        
+        loop_count = 0
+        retrieved_documents = []
+        final_answer = ""
+        
+        for output in app.stream(inputs):
+            node_name = list(output.keys())[0]
+            node_output = output[node_name]
+            
+            if "loop_count" in node_output:
+                loop_count = node_output["loop_count"]
+            if "documents" in node_output:
+                retrieved_documents = node_output["documents"]
+            if "generation" in node_output:
+                final_answer = node_output["generation"]
+                
+        end_time = time.perf_counter()
+        elapsed_seconds = end_time - start_time
+        
+        # Formatieren der Source Chunks
+        chunks_text = []
+        for c_idx, doc in enumerate(retrieved_documents, 1):
+            source = doc.metadata.get("source", "Unbekannte Quelle")
+            chunks_text.append(f"[Chunk {c_idx} (Quelle: {os.path.basename(source)})]:\n{doc.page_content}")
+            
+        chunks_formatted = "\n---\n".join(chunks_text) if chunks_text else "Keine Chunks verwendet"
+        
+        print(f"\n  [✔] Fertig in {elapsed_seconds:.3f} Sekunden.")
+        print(f"  [✔] Rewriter-Schleifen: {loop_count}")
+        
+        ergebnisse.append({
+            "Question": frage,
+            "Response": final_answer,
+            "Execution Time (s)": f"{elapsed_seconds:.3f}",
+            "Source Chunks": chunks_formatted,
+            "Rewrite Iterations": loop_count
+        })
+
+    # In CSV schreiben
+    print(f"\n[BATCH] Schreibe Ergebnisse in CSV-Datei '{output_pfad}'...")
+    try:
+        with open(output_pfad, "w", newline="", encoding="utf-8") as csvfile:
+            fieldnames = ["Question", "Response", "Execution Time (s)", "Source Chunks", "Rewrite Iterations"]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            
+            writer.writeheader()
+            for row in ergebnisse:
+                writer.writerow(row)
+        print(f"[BATCH] [OK] CSV erfolgreich gespeichert unter: {os.path.abspath(output_pfad)}")
+    except Exception as e:
+        print(f"[BATCH] [!] Fehler beim Schreiben der CSV-Datei: {e}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="LangGraph Corrective RAG Pipeline")
+    parser.add_argument("--batch_input", type=str, default=None, help="Pfad zur TXT-Datei mit einer Frage pro Zeile")
+    parser.add_argument("--batch_output", type=str, default=None, help="Pfad zur Ausgabedatei (.csv)")
+    
+    args = parser.parse_args()
+    
+    if args.batch_input:
+        run_batch_mode(args.batch_input, args.batch_output)
+    else:
+        run_interactive_mode()
+
+
+if __name__ == "__main__":
+    main()
