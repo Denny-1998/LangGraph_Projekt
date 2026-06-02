@@ -226,7 +226,7 @@ def run_interactive_mode():
         print(finale_antwort)
 
 
-def run_batch_mode(input_pfad: str, output_pfad: str):
+def run_batch_mode(input_pfad: str, output_pfad: str, start_index: int = 1):
     if not os.path.exists(input_pfad):
         print(f"  [!] Fehler: Eingabedatei '{input_pfad}' existiert nicht.")
         return
@@ -238,13 +238,44 @@ def run_batch_mode(input_pfad: str, output_pfad: str):
     with open(input_pfad, "r", encoding="utf-8") as f:
         fragen = [line.strip() for line in f if line.strip()]
 
-    print(f"[BATCH] Gefunden: {len(fragen)} Fragen. Starte Verarbeitung...")
+    gesamt_anzahl = len(fragen)
+    print(f"[BATCH] Gefunden: {gesamt_anzahl} Fragen.")
+
+    if start_index < 1 or start_index > gesamt_anzahl:
+        print(f"  [!] Fehler: Start-Index {start_index} ist ungültig (muss zwischen 1 und {gesamt_anzahl} liegen).")
+        return
+
+    # Bestimme Schreibmodus (neu schreiben oder anhängen)
+    schreib_modus = "w"
+    write_header = True
     
-    ergebnisse = []
-    
-    for i, frage in enumerate(fragen, 1):
+    # Wenn start_index > 1, hängen wir an, vorausgesetzt die Datei existiert bereits und ist nicht leer
+    if start_index > 1 and os.path.exists(output_pfad) and os.path.getsize(output_pfad) > 0:
+        schreib_modus = "a"
+        write_header = False
+        print(f"[BATCH] Setze fort ab Frage {start_index}. Ergebnisse werden an '{output_pfad}' angehängt.")
+    else:
+        print(f"[BATCH] Starte neu ab Frage {start_index}. Ergebnisse werden in '{output_pfad}' gespeichert.")
+
+    # CSV initialisieren (falls write_header, schreiben wir den Header direkt am Anfang)
+    fieldnames = ["Question", "Response", "Execution Time (s)", "Source Chunks", "Rewrite Iterations"]
+    if write_header:
+        try:
+            with open(output_pfad, "w", newline="", encoding="utf-8") as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+            print(f"[BATCH] CSV-Datei '{output_pfad}' initialisiert mit Header.")
+        except Exception as e:
+            print(f"[BATCH] [!] Fehler beim Initialisieren der CSV-Datei: {e}")
+            return
+
+    # Nur die Fragen ab dem Start-Index verarbeiten
+    verbleibende_fragen = fragen[start_index - 1:]
+
+    for relative_idx, frage in enumerate(verbleibende_fragen):
+        aktuelle_frage_nummer = start_index + relative_idx
         print(f"\n" + "="*50)
-        print(f"  [BATCH] [{i}/{len(fragen)}] Verarbeite Frage: '{frage}'")
+        print(f"  [BATCH] [{aktuelle_frage_nummer}/{gesamt_anzahl}] Verarbeite Frage: '{frage}'")
         print("="*50)
         
         start_time = time.perf_counter()
@@ -280,38 +311,36 @@ def run_batch_mode(input_pfad: str, output_pfad: str):
         print(f"\n  [✔] Fertig in {elapsed_seconds:.3f} Sekunden.")
         print(f"  [✔] Rewriter-Schleifen: {loop_count}")
         
-        ergebnisse.append({
+        # Zeile direkt in CSV schreiben
+        row_data = {
             "Question": frage,
             "Response": final_answer,
             "Execution Time (s)": f"{elapsed_seconds:.3f}",
             "Source Chunks": chunks_formatted,
             "Rewrite Iterations": loop_count
-        })
+        }
+        
+        try:
+            with open(output_pfad, "a", newline="", encoding="utf-8") as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writerow(row_data)
+            print(f"  [✔] Zeile in CSV geschrieben.")
+        except Exception as e:
+            print(f"  [!] Fehler beim Schreiben der Zeile in CSV: {e}")
 
-    # In CSV schreiben
-    print(f"\n[BATCH] Schreibe Ergebnisse in CSV-Datei '{output_pfad}'...")
-    try:
-        with open(output_pfad, "w", newline="", encoding="utf-8") as csvfile:
-            fieldnames = ["Question", "Response", "Execution Time (s)", "Source Chunks", "Rewrite Iterations"]
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            
-            writer.writeheader()
-            for row in ergebnisse:
-                writer.writerow(row)
-        print(f"[BATCH] [OK] CSV erfolgreich gespeichert unter: {os.path.abspath(output_pfad)}")
-    except Exception as e:
-        print(f"[BATCH] [!] Fehler beim Schreiben der CSV-Datei: {e}")
+    print(f"\n[BATCH] [FERTIG] Alle verbleibenden Fragen verarbeitet. Ergebnisse in: {os.path.abspath(output_pfad)}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="LangGraph Corrective RAG Pipeline")
     parser.add_argument("--batch_input", type=str, default=None, help="Pfad zur TXT-Datei mit einer Frage pro Zeile")
     parser.add_argument("--batch_output", type=str, default=None, help="Pfad zur Ausgabedatei (.csv)")
+    parser.add_argument("--start_index", type=int, default=1, help="Start-Index (1-basiert) für die Batch-Verarbeitung")
     
     args = parser.parse_args()
     
     if args.batch_input:
-        run_batch_mode(args.batch_input, args.batch_output)
+        run_batch_mode(args.batch_input, args.batch_output, args.start_index)
     else:
         run_interactive_mode()
 

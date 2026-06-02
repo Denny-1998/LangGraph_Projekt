@@ -268,10 +268,19 @@ def main_menu():
                 wait()
                 continue
                 
+            start_index_str = prompt_input("Start-Index (Zeilennummer der Frage, ab der begonnen/fortgesetzt werden soll)", "1")
+            try:
+                start_index = int(start_index_str)
+                if start_index < 1:
+                    raise ValueError
+            except ValueError:
+                print("  [!] Ungültiger Start-Index. Setze auf 1.")
+                start_index = 1
+
             print()
             if confirmation("Batch-Evaluation jetzt starten?"):
                 print()
-                run_script(SLOP_SCRIPT, ["--batch_input", input_pfad, "--batch_output", output_pfad])
+                run_script(SLOP_SCRIPT, ["--batch_input", input_pfad, "--batch_output", output_pfad, "--start_index", str(start_index)])
                 wait()
 
         else:
