@@ -125,7 +125,7 @@ def transform_query(state: GraphState):
 
             Ursprüngliche Frage: {question}
             Umformulierte Frage:""",
-            input_variables=["question"],
+        input_variables=["question"],
     )
 
 
