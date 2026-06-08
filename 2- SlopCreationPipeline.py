@@ -107,14 +107,28 @@ def transform_query(state: GraphState):
     question = state["question"]
     loop_count = state.get("loop_count", 0) + 1
     
+    # prompt = PromptTemplate(
+    #     template="""Du bist ein Experte im Formulieren von Suchanfragen. 
+    #     Die folgende Frage hat keine guten Ergebnisse geliefert. Formuliere sie um, um bessere Treffer in einer Vektordatenbank zu erzielen.
+    #     Gib NUR die neue Frage aus.
+    #     Ursprüngliche Frage: {question}
+    #     Neue Frage:""",
+    #     input_variables=["question"],
+    # )
+
     prompt = PromptTemplate(
-        template="""Du bist ein Experte im Formulieren von Suchanfragen. 
-        Die folgende Frage hat keine guten Ergebnisse geliefert. Formuliere sie um, um bessere Treffer in einer Vektordatenbank zu erzielen.
-        Gib NUR die neue Frage aus.
-        Ursprüngliche Frage: {question}
-        Neue Frage:""",
-        input_variables=["question"],
+        template="""Du bist ein Experte im Formulieren von Suchanfragen für semantische Suche.
+            Die folgende Frage hat keine relevanten Textstellen gefunden. 
+            Formuliere sie um, sodass sie besser zu den gesuchten Textpassagen passt.
+            Verwende konkrete Schlüsselwörter und vermeide vage Formulierungen.
+            Gib NUR die umformulierte Frage aus – keine Erklärungen.
+
+            Ursprüngliche Frage: {question}
+            Umformulierte Frage:""",
+            input_variables=["question"],
     )
+
+
     rewriter_chain = prompt | llm | StrOutputParser()
     bessere_frage = rewriter_chain.invoke({"question": question})
     print("\n" + "="*50) 
