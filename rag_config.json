@@ -5,7 +5,7 @@
   "chunk_overlap": 200,
   "chunking_mode": "semantic",
   "embedding_model": "all-MiniLM-L6-v2",
-  "ollama_model": "llama3",
+  "ollama_model": "gemma4:e4b",
   "llm_temperature": 0.0,
   "retriever_k": 5,
   "max_rewrite_loops": 10
