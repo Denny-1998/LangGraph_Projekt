@@ -118,7 +118,9 @@ print("-> Beginne mit dem Chunking...")
 
 if CHUNKING_MODE == "semantic":
     print("   [Info] Nutze Semantisches Chunking (trennt nach Sinnabschnitten).")
-    text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="standard_deviation")
+    text_splitter = SemanticChunker(embeddings, 
+    breakpoint_threshold_type="percentile",
+    breakpoint_threshold_amount=0.75 )
 else:
     print(f"   [Info] Nutze fixes Limit (~{TOKEN_LIMIT} Tokens / {ZEICHEN_LIMIT} Zeichen pro Chunk).")
     text_splitter = RecursiveCharacterTextSplitter(
