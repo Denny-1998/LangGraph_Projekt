@@ -58,6 +58,8 @@ class GraphState(TypedDict):
     generation: str
     documents: List[str]
     loop_count: int
+    evaluated_chunks: List[str]
+    rejected_chunks: List[str]
 
 # ==========================================
 # 3. DIE KNOTEN (Nodes)
@@ -65,19 +67,76 @@ class GraphState(TypedDict):
 def retrieve(state: GraphState):
     print("\n-> [KNOTEN: RETRIEVE] Suche in der Vektordatenbank...")
     question = state["question"]
-    documents = retriever.invoke(question)
     
-    print(f"   [i] {len(documents)} Chunks initial gefunden. Vorschau:")
-    for i, d in enumerate(documents):
+    evaluated_chunks = state.get("evaluated_chunks", [])
+    
+    target_k = RETRIEVER_K
+    current_k = target_k
+    
+    filtered_documents = []
+    seen_contents = set()
+    for content in evaluated_chunks:
+        seen_contents.add(content.strip())
+        
+    max_attempts = 5
+    attempt = 0
+    last_retrieved_docs = []
+    
+    while len(filtered_documents) < target_k and attempt < max_attempts:
+        attempt += 1
+        documents = vectorstore.similarity_search(question, k=current_k)
+        last_retrieved_docs = documents
+        
+        filtered_documents = []
+        local_seen = set(seen_contents)
+        
+        skipped_count = 0
+        for d in documents:
+            content_normalized = d.page_content.strip()
+            if content_normalized in local_seen:
+                skipped_count += 1
+            else:
+                if len(filtered_documents) < target_k:
+                    filtered_documents.append(d)
+                    local_seen.add(content_normalized)
+                    
+        if len(filtered_documents) >= target_k or len(documents) < current_k:
+            break
+            
+        current_k += skipped_count
+
+    print(f"   [i] Initial wurden {target_k} Chunks angefordert.")
+    
+    printed_seen = set(seen_contents)
+    replacements_count = 0
+    
+    for idx, d in enumerate(last_retrieved_docs):
+        content_normalized = d.page_content.strip()
+        snippet = d.page_content.replace('\n', ' ')[:80]
+        
+        if content_normalized in seen_contents:
+            print(f"   [x] Überspringe bereits evaluierten/abgelehnten Chunk: '{snippet}...'")
+        elif content_normalized in printed_seen:
+            print(f"   [x] Überspringe Duplikat-Chunk in dieser Suche: '{snippet}...'")
+        else:
+            if idx >= target_k:
+                print(f"   [+] ERSATZ-CHUNK GEFUNDEN: '{snippet}...'")
+                replacements_count += 1
+            printed_seen.add(content_normalized)
+            
+    print(f"   [i] {len(filtered_documents)} Chunks nach Filterung übrig ({replacements_count} Ersatz-Chunks). Vorschau:")
+    for i, d in enumerate(filtered_documents):
         snippet = d.page_content.replace('\n', ' ')[:80]
         print(f"       - Chunk {i+1}: '{snippet}...'")
         
-    return {"documents": documents, "question": question}
+    return {"documents": filtered_documents, "question": question}
 
 def grade_documents(state: GraphState):
     print("-> [KNOTEN: GRADER] Bewerte die Relevanz der gefundenen Dokumente...")
     question = state["question"]
     documents = state["documents"]
+    evaluated_chunks = state.get("evaluated_chunks", [])
+    rejected_chunks = state.get("rejected_chunks", [])
     
     prompt = PromptTemplate(
         template="""Du bist ein strenger Bewerter. Prüfe, ob das Dokument für die Frage relevant ist.
@@ -90,17 +149,36 @@ def grade_documents(state: GraphState):
     grader_chain = prompt | llm | StrOutputParser()
     
     gefilterte_docs = []
+    new_evaluated = list(evaluated_chunks)
+    new_rejected = list(rejected_chunks)
+    
     for d in documents:
-        bewertung = grader_chain.invoke({"question": question, "document": d.page_content})
-        snippet = d.page_content.replace('\n', ' ')[:80]
+        chunk_content = d.page_content
+        snippet = chunk_content.replace('\n', ' ')[:80]
         
-        if "ja" in bewertung.lower():
-            print(f"   [+] BEHALTEN (Relevant): '{snippet}...'")
-            gefilterte_docs.append(d)
+        if chunk_content in evaluated_chunks:
+            if chunk_content in rejected_chunks:
+                print(f"   [-] BEREITS REJECTED (Überspringe Bewertung und Filterung): '{snippet}...'")
+            else:
+                print(f"   [+] BEREITS ACCEPTED (Überspringe Bewertung, behalte): '{snippet}...'")
+                gefilterte_docs.append(d)
         else:
-            print(f"   [-] VERWORFEN (Irrelevant): '{snippet}...'")
+            bewertung = grader_chain.invoke({"question": question, "document": chunk_content})
+            new_evaluated.append(chunk_content)
             
-    return {"documents": gefilterte_docs, "question": question}
+            if "ja" in bewertung.lower():
+                print(f"   [+] BEHALTEN (Relevant): '{snippet}...'")
+                gefilterte_docs.append(d)
+            else:
+                print(f"   [-] VERWORFEN (Irrelevant): '{snippet}...'")
+                new_rejected.append(chunk_content)
+            
+    return {
+        "documents": gefilterte_docs, 
+        "question": question, 
+        "evaluated_chunks": new_evaluated, 
+        "rejected_chunks": new_rejected
+    }
 
 def transform_query(state: GraphState):
     print("-> [KNOTEN: REWRITER] Suche erfolglos. Formuliere die Frage um...")
@@ -212,7 +290,12 @@ def run_interactive_mode():
         if not user_input.strip():
             continue
 
-        inputs = {"question": user_input, "loop_count": 0}
+        inputs = {
+            "question": user_input, 
+            "loop_count": 0,
+            "evaluated_chunks": [],
+            "rejected_chunks": []
+        }
 
         final_state = None
         for output in app.stream(inputs):
@@ -281,7 +364,12 @@ def run_batch_mode(input_pfad: str, output_pfad: str, start_index: int = 1):
         
         start_time = time.perf_counter()
         
-        inputs = {"question": frage, "loop_count": 0}
+        inputs = {
+            "question": frage, 
+            "loop_count": 0,
+            "evaluated_chunks": [],
+            "rejected_chunks": []
+        }
         
         loop_count = 0
         retrieved_documents = []
